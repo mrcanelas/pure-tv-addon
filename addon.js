@@ -33,6 +33,8 @@ async function getState(cfg) {
 
 const builder = new addonBuilder(manifest)
 
+const CATALOG_PAGE_SIZE = 50
+
 builder.defineCatalogHandler(({type, id, extra}) => {
 	console.log("request for catalogs: "+type+" "+id)
 	// Docs: https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/requests/defineCatalogHandler.md
@@ -41,8 +43,11 @@ builder.defineCatalogHandler(({type, id, extra}) => {
 		const cfg = extra && extra.__cfg
 		if (!cfg) return { metas: [] }
 
+		const skip = Math.max(0, parseInt(extra && extra.skip, 10) || 0)
+
 		const { playlist } = await getState(cfg)
-		const metas = m3uChannelsToMetas(ADDON_PREFIX, playlist.channels || [])
+		const allMetas = m3uChannelsToMetas(ADDON_PREFIX, playlist.channels || [])
+		const metas = allMetas.slice(skip, skip + CATALOG_PAGE_SIZE)
 		return { metas }
 	})()
 })
