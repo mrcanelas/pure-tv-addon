@@ -92,7 +92,12 @@ function normalizePoster(url) {
 
 function normKey(s) {
 	if (!s || typeof s !== 'string') return ''
-	return s.trim().toLowerCase()
+	return s
+		.trim()
+		.toLowerCase()
+		.replace(/&amp;/gi, '&')
+		.replace(/\s+/g, ' ')
+		.trim()
 }
 
 function m3uChannelsToMetas(prefix, channels) {
