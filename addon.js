@@ -36,8 +36,6 @@ const builder = new addonBuilder(manifest)
 const CATALOG_PAGE_SIZE = 20
 
 builder.defineCatalogHandler(({type, id, extra}) => {
-	console.log("request for catalogs: "+type+" "+id)
-	// Docs: https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/requests/defineCatalogHandler.md
 	return (async () => {
 		if (type !== 'tv' || id !== 'epg') return { metas: [] }
 		const cfg = extra && extra.__cfg
@@ -59,8 +57,6 @@ builder.defineCatalogHandler(({type, id, extra}) => {
 })
 
 builder.defineMetaHandler(({type, id, extra}) => {
-	console.log("request for meta: "+type+" "+id)
-	// Docs: https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/requests/defineMetaHandler.md
 	return (async () => {
 		if (id.startsWith(ADDON_PREFIX)) return { meta: null }
 		const cfg = extra && extra.__cfg
@@ -115,8 +111,6 @@ builder.defineMetaHandler(({type, id, extra}) => {
 })
 
 builder.defineStreamHandler(({type, id, extra}) => {
-	console.log("request for streams: "+type+" "+id)
-	// Docs: https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/requests/defineStreamHandler.md
 	return (async () => {
 		if (id.startsWith(ADDON_PREFIX)) return { streams: [] }
 		const cfg = extra && extra.__cfg
