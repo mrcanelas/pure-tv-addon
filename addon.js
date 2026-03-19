@@ -48,7 +48,13 @@ builder.defineCatalogHandler(({type, id, extra}) => {
 		const { playlist } = await getState(cfg)
 		const allMetas = m3uChannelsToMetas(ADDON_PREFIX, playlist.channels || [])
 		const metas = allMetas.slice(skip, skip + CATALOG_PAGE_SIZE)
-		return { metas }
+		return {
+			metas,
+			// cache curto para o EPG/plalist mudar sem travar o usuário
+			cacheMaxAge: 300, // 5 min
+			staleRevalidate: 1800, // 30 min
+			staleError: 604800, // 7 dias
+		}
 	})()
 })
 
@@ -101,6 +107,9 @@ builder.defineMetaHandler(({type, id, extra}) => {
 				posterShape: 'square',
 				videos,
 			},
+			cacheMaxAge: 900, // 15 min
+			staleRevalidate: 3600, // 1h
+			staleError: 604800, // 7 dias
 		}
 	})()
 })
@@ -114,7 +123,7 @@ builder.defineStreamHandler(({type, id, extra}) => {
 		if (!cfg) return { streams: [] }
 
 		const { index } = await getState(cfg)
-		const ch = index.idToChannel.get(`pure:${id.split(':')[1]}`)
+		const ch = index.idToChannel.get(`${ADDON_PREFIX}${id.split(':')[1]}`)
 		if (!ch || !ch.url) return { streams: [] }
 
 		const name = ch.tvgName || ch.name || 'Live'
@@ -126,6 +135,9 @@ builder.defineStreamHandler(({type, id, extra}) => {
 					url: ch.url,
 				},
 			],
+			cacheMaxAge: 3600, // 1h
+			staleRevalidate: 7200, // 2h
+			staleError: 604800, // 7 dias
 		}
 	})()
 })

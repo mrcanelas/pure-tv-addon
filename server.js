@@ -60,6 +60,10 @@ app.post('/api/config', async (req, res) => {
 
 app.use((req, res, next) => serverless(req, res, next))
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
 	console.log('PureTV rodando em:', `http://127.0.0.1:${PORT}/configure`)
+})
+
+server.on('error', (err) => {
+	console.error('Falha ao iniciar servidor (verifique a porta/ambiente). Erro:', err)
 })

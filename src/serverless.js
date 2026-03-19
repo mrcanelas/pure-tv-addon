@@ -29,10 +29,17 @@ router.get('{/:cfg}/manifest.json', async (req, res) => {
 		const cfg = req.params.cfg || ''
 		if (cfg && !isEncodedConfig(cfg)) throw new Error('cfg must be inline')
 		res.setHeader('Content-Type', 'application/json; charset=utf-8')
+		// Manifest é estático (independente da config), então pode ficar em cache.
+		// max-age=12h, stale-while-revalidate=7d, stale-if-error=30d
+		res.setHeader(
+			'Cache-Control',
+			'public, max-age=43200, stale-while-revalidate=604800, stale-if-error=2592000'
+		)
 		res.end(JSON.stringify(addonInterface.manifest))
 	} catch {
 		res.statusCode = 404
 		res.setHeader('Content-Type', 'application/json; charset=utf-8')
+		res.setHeader('Cache-Control', 'no-store')
 		res.end(JSON.stringify({ error: 'Config não encontrada. Gere um link em /configure.' }))
 	}
 })
@@ -50,8 +57,18 @@ router.get('{/:cfg}/:resource/:type/:id{/:extra}.json', async (req, res, next) =
 				: {}
 
 		const resp = await addonInterface.get(resource, type, id, { ...extra, __cfg: cfg })
+		const { cacheMaxAge, staleRevalidate, staleError, ...payload } = resp || {}
+
+		// Headers de cache (útil para proxies/CDNs que suportam stale-while-revalidate/stale-if-error)
+		const cacheParts = []
+		if (Number.isInteger(cacheMaxAge)) cacheParts.push(`max-age=${cacheMaxAge}`)
+		if (Number.isInteger(staleRevalidate)) cacheParts.push(`stale-while-revalidate=${staleRevalidate}`)
+		if (Number.isInteger(staleError)) cacheParts.push(`stale-if-error=${staleError}`)
+		if (cacheParts.length) res.setHeader('Cache-Control', `public, ${cacheParts.join(', ')}`)
+		else res.setHeader('Cache-Control', 'no-store')
+
 		res.setHeader('Content-Type', 'application/json; charset=utf-8')
-		res.end(JSON.stringify(resp))
+		res.end(JSON.stringify(payload))
 	} catch (err) {
 		if (err && err.noHandler) {
 			if (next) next()
