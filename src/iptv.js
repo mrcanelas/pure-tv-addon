@@ -200,6 +200,7 @@ function xmltvToVideosForChannel(xmltv, id, channelIds) {
 				title,
 				subtitle: subtitle || undefined,
 				released: date ? date.toISOString() : undefined,
+				releasedInfo: date ? date.toISOString() : undefined,
 				overview: overview || undefined,
 				thumbnail: thumbnail || undefined,
 				startTime: start ? start.toISOString() : undefined,
