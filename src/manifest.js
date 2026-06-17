@@ -14,7 +14,11 @@ const manifest = {
     ],
     resources: ['catalog', 'meta', 'stream'],
     types: ['tv'],
-    idPrefixes: [ADDON_PREFIX]
+    idPrefixes: [ADDON_PREFIX],
+    behaviorHints: {
+        configurable: true,
+        epgProvider: true,
+    },
 }
 
 module.exports = manifest
