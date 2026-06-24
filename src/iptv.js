@@ -1,6 +1,7 @@
 const axios = require('axios')
 const { parseM3U } = require('@iptv/playlist')
 const epgParser = require('epg-parser')
+const { decode } = require('html-entities')
 
 function stableId(input) {
 	let h = 2166136261
@@ -13,13 +14,15 @@ function stableId(input) {
 
 function pickFirstText(node) {
 	if (!node) return null
-	if (typeof node === 'string') return node.trim() || null
+	if (typeof node === 'string') return decode(node.trim()) || null
 	if (Array.isArray(node)) return pickFirstText(node[0])
+
 	if (typeof node === 'object') {
 		if (node instanceof Date) return node.toISOString()
-		if (typeof node.value === 'string') return node.value.trim() || null
-		if (typeof node._ === 'string') return node._.trim() || null
+		if (typeof node.value === 'string') return decode(node.value.trim()) || null
+		if (typeof node._ === 'string') return decode(node._.trim()) || null
 	}
+
 	return null
 }
 
@@ -163,12 +166,15 @@ function xmltvToVideosForChannel(xmltv, id, channelIds) {
 		.map((p) => {
 			const start = new Date(p.start)
 			const stop = new Date(p.stop)
-			const date = new Date(p.date)
+			const originalReleaseDate = new Date(p.date);
 			const title = pickFirstText(p.title) || 'Program'
-			const subtitle = pickFirstText(p['sub-title']) || pickFirstText(p.subTitle) || null
-			const overview = pickFirstText(p.desc) || null
+			const subtitle = pickFirstText(p['sub-title']) || pickFirstText(p.subTitle) || undefined
+			const overview = pickFirstText(p.desc) || undefined
 			const icon = p.icon && (Array.isArray(p.icon) ? p.icon[0] : p.icon)
-			const thumbnail = (icon && icon.src) ? icon.src : null
+			const thumbnail = (icon && icon.src) ? icon.src : undefined
+			const durationMinutes = Math.round((stop.getTime() - start.getTime()) / (60 * 1000))
+			const released = originalReleaseDate.toISOString() || undefined
+			const releaseInfo = String(originalReleaseDate.getUTCFullYear()) || undefined
 
 			const categories = []
 			if (p.category) {
@@ -198,11 +204,12 @@ function xmltvToVideosForChannel(xmltv, id, channelIds) {
 			return {
 				id : `${id}:${stableId(title + start)}`,
 				title,
-				subtitle: subtitle || undefined,
-				released: date ? date.toISOString() : undefined,
-				releasedInfo: date ? date.toISOString() : undefined,
-				overview: overview || undefined,
-				thumbnail: thumbnail || undefined,
+				subtitle: subtitle,
+				released,
+				releaseInfo,
+				runtime: durationMinutes > 0 ? `${durationMinutes} min` : undefined,
+				overview: overview,
+				thumbnail: thumbnail,
 				startTime: start ? start.toISOString() : undefined,
 				endTime: stop ? stop.toISOString() : undefined,
 				genres: categories.length ? categories : undefined,
