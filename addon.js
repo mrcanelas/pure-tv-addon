@@ -100,7 +100,7 @@ builder.defineMetaHandler(({type, id, extra}) => {
 				name: displayName,
 				logo: poster,
 				poster,
-				posterShape: 'square',
+				posterShape: 'landscape',
 				videos,
 			},
 			cacheMaxAge: 900, // 15 min
