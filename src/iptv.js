@@ -114,7 +114,7 @@ function m3uChannelsToMetas(prefix, channels) {
 			type: 'tv',
 			name,
 			poster: poster && `https://da5f663b4690-proxyimage.baby-beamup.club/proxy-image/?url=${poster}`,
-			posterShape: 'square',
+			posterShape: 'landscape',
 		}
 	})
 }
