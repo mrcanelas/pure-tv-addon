@@ -8,6 +8,8 @@ const manifest = {
     catalogs: [
         {
             type: 'tv', id: `${ADDON_PREFIX}catalog`, name: 'PureTV', extra: [{
+                name: 'date'
+            }, {
                 name: 'skip'
             }]
         }

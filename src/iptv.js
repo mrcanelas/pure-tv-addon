@@ -140,89 +140,142 @@ function buildChannelIndex(prefix, playlist) {
 	return { idToChannel, tvgKeyToId }
 }
 
-function xmltvToVideosForChannel(xmltv, id, channelIds) {
+function programToVideo(channelId, p) {
+	const start = parseXmltvDate(p.start)
+	const stop = parseXmltvDate(p.stop)
+	if (!start || isNaN(start) || !stop || isNaN(stop)) return null
+
+	const title = pickFirstText(p.title) || 'Program'
+	const subtitle = pickFirstText(p['sub-title']) || pickFirstText(p.subTitle) || undefined
+	const overview = pickFirstText(p.desc) || undefined
+	const icon = p.icon && (Array.isArray(p.icon) ? p.icon[0] : p.icon)
+	const thumbnail = (icon && icon.src) ? icon.src : undefined
+	const durationMinutes = Math.round((stop.getTime() - start.getTime()) / (60 * 1000))
+	// the original air date is optional in XMLTV and only feeds releaseInfo;
+	// `released` must mirror startTime - stremio features key on it
+	const airDate = p.date ? parseXmltvDate(p.date) : null
+	const releaseInfo = airDate && !isNaN(airDate) ? String(airDate.getUTCFullYear()) : undefined
+
+	const categories = []
+	if (p.category) {
+		const arr = Array.isArray(p.category) ? p.category : [p.category]
+		for (const c of arr) {
+			const v = pickFirstText(c)
+			if (v) categories.push(v)
+		}
+	}
+
+	const cast = []
+	const directors = []
+	const credits = p.credits
+	if (credits) {
+		const actors = credits.actor ? (Array.isArray(credits.actor) ? credits.actor : [credits.actor]) : []
+		for (const a of actors) {
+			const v = pickFirstText(a)
+			if (v) cast.push(v)
+		}
+		const dirs = credits.director ? (Array.isArray(credits.director) ? credits.director : [credits.director]) : []
+		for (const d of dirs) {
+			const v = pickFirstText(d)
+			if (v) directors.push(v)
+		}
+	}
+
+	return {
+		id: `${channelId}:${stableId(title + start.toISOString())}`,
+		title,
+		subtitle: subtitle,
+		released: start.toISOString(),
+		releaseInfo,
+		runtime: durationMinutes > 0 ? `${durationMinutes} min` : undefined,
+		overview: overview,
+		thumbnail: thumbnail,
+		startTime: start.toISOString(),
+		endTime: stop.toISOString(),
+		genres: categories.length ? categories : undefined,
+		cast: cast.length ? cast : undefined,
+		directors: directors.length ? directors : undefined,
+		links: buildLinks({ genres: categories, cast }),
+	}
+}
+
+// Resolves every channel's XMLTV id candidates and buckets all programs
+// into a Map<channelId, videos sorted by startTime> in a single pass.
+// Built once per getState() cache entry so the catalog handler can serve
+// programs for a whole page of channels without rescanning the XMLTV.
+function buildProgramIndex(xmltv, index) {
 	const progs =
 		(xmltv && Array.isArray(xmltv.programs) && xmltv.programs) ||
 		(xmltv && Array.isArray(xmltv.programmes) && xmltv.programmes) ||
 		[]
-	const ids = Array.isArray(channelIds) ? channelIds : [channelIds]
-	const wanted = ids.map(normKey).filter(Boolean)
 
-	let filtered = []
-	if (wanted.length) {
-		const wantedSet = new Set(wanted)
-		filtered = progs.filter((p) => wantedSet.has(normKey(p.channel || '')))
+	const displayNameToXmltvId = new Map()
+	if (Array.isArray(xmltv.channels)) {
+		for (const c of xmltv.channels) {
+			if (!c || !c.id) continue
+			const dns = c['display-name']
+			const arr = !dns ? [] : (Array.isArray(dns) ? dns : [dns])
+			for (const dn of arr) {
+				const name = ((dn && (dn.value || dn._)) || '').trim()
+				if (name) displayNameToXmltvId.set(normKey(name), String(c.id).trim())
+			}
+		}
 	}
 
-	if (!filtered.length && wanted.length) {
-		filtered = progs.filter((p) => {
+	const keyToChannelId = new Map()
+	const buckets = new Map()
+	for (const [id, ch] of index.idToChannel) {
+		buckets.set(id, [])
+		const candidates = new Set()
+		for (const v of [
+			ch.tvgId,
+			ch.tvgName,
+			ch.name,
+			ch.extras && ch.extras['tvg-id'],
+			ch.extras && ch.extras['tvg-name'],
+		]) {
+			if (typeof v === 'string' && v.trim()) candidates.add(v.trim())
+		}
+		for (const candidate of Array.from(candidates)) {
+			const xmltvId = displayNameToXmltvId.get(normKey(candidate))
+			if (xmltvId) candidates.add(xmltvId)
+		}
+		for (const candidate of candidates) {
+			const key = normKey(candidate)
+			if (key && !keyToChannelId.has(key)) keyToChannelId.set(key, id)
+		}
+	}
+
+	for (const p of progs) {
+		const id = keyToChannelId.get(normKey(p.channel || ''))
+		if (!id) continue
+		const video = programToVideo(id, p)
+		if (video) buckets.get(id).push(video)
+	}
+
+	// fuzzy fallback, only for channels the exact pass left empty
+	for (const [id, videos] of buckets) {
+		if (videos.length) continue
+		const wanted = []
+		for (const [key, channelId] of keyToChannelId) {
+			if (channelId === id && key.length >= 5) wanted.push(key)
+		}
+		if (!wanted.length) continue
+		for (const p of progs) {
 			const pc = normKey(p.channel || '')
-			if (!pc) return false
-			return wanted.some((w) => (w.length >= 5) && (pc.includes(w) || w.includes(pc)))
-		})
+			if (!pc) continue
+			if (wanted.some((w) => pc.includes(w) || w.includes(pc))) {
+				const video = programToVideo(id, p)
+				if (video) videos.push(video)
+			}
+		}
 	}
 
-	return filtered
-		.map((p) => {
-			const start = new Date(p.start)
-			const stop = new Date(p.stop)
-			const originalReleaseDate = new Date(p.date);
-			const title = pickFirstText(p.title) || 'Program'
-			const subtitle = pickFirstText(p['sub-title']) || pickFirstText(p.subTitle) || undefined
-			const overview = pickFirstText(p.desc) || undefined
-			const icon = p.icon && (Array.isArray(p.icon) ? p.icon[0] : p.icon)
-			const thumbnail = (icon && icon.src) ? icon.src : undefined
-			const durationMinutes = Math.round((stop.getTime() - start.getTime()) / (60 * 1000))
-			const released = originalReleaseDate.toISOString() || undefined
-			const releaseInfo = String(originalReleaseDate.getUTCFullYear()) || undefined
+	for (const videos of buckets.values()) {
+		videos.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+	}
 
-			const categories = []
-			if (p.category) {
-				const arr = Array.isArray(p.category) ? p.category : [p.category]
-				for (const c of arr) {
-					const v = pickFirstText(c)
-					if (v) categories.push(v)
-				}
-			}
-
-			const cast = []
-			const directors = []
-			const credits = p.credits
-			if (credits) {
-				const actors = credits.actor ? (Array.isArray(credits.actor) ? credits.actor : [credits.actor]) : []
-				for (const a of actors) {
-					const v = pickFirstText(a)
-					if (v) cast.push(v)
-				}
-				const dirs = credits.director ? (Array.isArray(credits.director) ? credits.director : [credits.director]) : []
-				for (const d of dirs) {
-					const v = pickFirstText(d)
-					if (v) directors.push(v)
-				}
-			}
-
-			return {
-				id : `${id}:${stableId(title + start)}`,
-				title,
-				subtitle: subtitle,
-				released,
-				releaseInfo,
-				runtime: durationMinutes > 0 ? `${durationMinutes} min` : undefined,
-				overview: overview,
-				thumbnail: thumbnail,
-				startTime: start ? start.toISOString() : undefined,
-				endTime: stop ? stop.toISOString() : undefined,
-				genres: categories.length ? categories : undefined,
-				cast: cast.length ? cast : undefined,
-				directors: directors.length ? directors : undefined,
-				links: buildLinks({ genres: categories, cast }),
-			}
-		})
-		.sort((a, b) => {
-			const as = a.startTime ? Date.parse(a.startTime) : 0
-			const bs = b.startTime ? Date.parse(b.startTime) : 0
-			return as - bs
-		})
+	return buckets
 }
 
 module.exports = {
@@ -231,6 +284,6 @@ module.exports = {
 	loadXmltv,
 	m3uChannelsToMetas,
 	buildChannelIndex,
-	xmltvToVideosForChannel,
+	buildProgramIndex,
 }
 

@@ -7,7 +7,7 @@ const {
 	loadXmltv,
 	m3uChannelsToMetas,
 	buildChannelIndex,
-	xmltvToVideosForChannel,
+	buildProgramIndex,
 } = require('./src/iptv')
 
 const ADDON_PREFIX = 'pure:'
@@ -25,15 +25,33 @@ async function getState(cfg) {
 	const playlist = await loadPlaylist(cfgData)
 	const xmltv = await loadXmltv(cfgData)
 	const index = buildChannelIndex(ADDON_PREFIX, playlist)
+	// channel -> programs, resolved once so the catalog handler can serve
+	// a whole page of channels without rescanning the XMLTV per channel
+	const programs = buildProgramIndex(xmltv, index)
 
-	const state = { cfgData, playlist, xmltv, index }
+	const state = { cfgData, playlist, xmltv, index, programs }
 	cache.set(cfg, { at: now, state })
 	return state
 }
 
 const builder = new addonBuilder(manifest)
 
-const CATALOG_PAGE_SIZE = 20
+const CATALOG_PAGE_SIZE = 50
+
+// [dayStartMs, dayEndMs) of the requested UTC day, defaulting to today
+function utcDayWindow(dateStr) {
+	const day = /^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')
+		? dateStr
+		: new Date().toISOString().slice(0, 10)
+	const startMs = Date.parse(`${day}T00:00:00.000Z`)
+	return { startMs, endMs: startMs + 24 * 60 * 60 * 1000 }
+}
+
+// programs overlapping the day window (midnight-spanning shows included)
+function videosForDay(videos, { startMs, endMs }) {
+	return videos.filter((v) =>
+		Date.parse(v.startTime) < endMs && Date.parse(v.endTime) > startMs)
+}
 
 builder.defineCatalogHandler(({type, id, extra}) => {
 	return (async () => {
@@ -43,16 +61,33 @@ builder.defineCatalogHandler(({type, id, extra}) => {
 
 		const skip = Math.max(0, parseInt(extra && extra.skip, 10) || 0)
 
-		const { playlist } = await getState(cfg)
+		const { playlist, programs } = await getState(cfg)
 		const allMetas = m3uChannelsToMetas(ADDON_PREFIX, playlist.channels || [])
 		const metas = allMetas.slice(skip, skip + CATALOG_PAGE_SIZE)
-		return {
-			metas,
+		const cacheHeaders = {
 			// cache curto para o EPG/plalist mudar sem travar o usuário
 			cacheMaxAge: 300, // 5 min
 			staleRevalidate: 1800, // 30 min
 			staleError: 604800, // 7 dias
 		}
+
+		// EPG guide requests: stremio-core always sends the `date` extra to
+		// epgProvider addons and expects the channels with the day's
+		// programs under `metasDetailed`; requests without `date` keep the
+		// legacy format so older clients are unaffected
+		if (extra && typeof extra.date !== 'undefined') {
+			const day = utcDayWindow(extra.date)
+			return {
+				metasDetailed: metas.map((meta) => ({
+					...meta,
+					behaviorHints: { hasScheduledVideos: true },
+					videos: videosForDay(programs.get(meta.id) || [], day),
+				})),
+				...cacheHeaders,
+			}
+		}
+
+		return { metas, ...cacheHeaders }
 	})()
 })
 
@@ -62,36 +97,12 @@ builder.defineMetaHandler(({type, id, extra}) => {
 		const cfg = extra && extra.__cfg
 		if (!cfg) return { meta: null }
 
-		const { xmltv, index } = await getState(cfg)
+		const { index, programs } = await getState(cfg)
 		const ch = index.idToChannel.get(id)
 		if (!ch) return { meta: null }
 
 		const displayName = ch.tvgName || ch.name || ch.tvgId || 'Canal'
 		const poster = `https://da5f663b4690-proxyimage.baby-beamup.club/proxy-image/?url=${ch.tvgLogo || (ch.extras && (ch.extras['tvg-logo'] || ch.extras['logo'])) || undefined}`
-
-		const candidates = new Set()
-		for (const v of [
-			ch.tvgId,
-			ch.tvgName,
-			ch.name,
-			ch.extras && ch.extras['tvg-id'],
-			ch.extras && ch.extras['tvg-name'],
-		]) {
-			if (typeof v === 'string' && v.trim()) candidates.add(v.trim())
-		}
-
-		if (Array.isArray(xmltv.channels) && candidates.size) {
-			for (const c of xmltv.channels) {
-				const dns = c['display-name']
-				const arr = !dns ? [] : (Array.isArray(dns) ? dns : [dns])
-				const names = arr.map((dn) => ((dn && (dn.value || dn._)) || '').trim()).filter(Boolean)
-				if (!names.length) continue
-				const hit = names.some((n) => candidates.has(n))
-				if (hit && c.id) candidates.add(String(c.id).trim())
-			}
-		}
-
-		const videos = xmltvToVideosForChannel(xmltv, id, Array.from(candidates))
 
 		return {
 			meta: {
@@ -101,7 +112,10 @@ builder.defineMetaHandler(({type, id, extra}) => {
 				logo: poster,
 				poster,
 				posterShape: 'landscape',
-				videos,
+				behaviorHints: { hasScheduledVideos: true },
+				// the full multi-day program - the guide grid uses the
+				// catalog with the `date` extra instead
+				videos: programs.get(id) || [],
 			},
 			cacheMaxAge: 900, // 15 min
 			staleRevalidate: 3600, // 1h
@@ -127,6 +141,9 @@ builder.defineStreamHandler(({type, id, extra}) => {
 					name: 'PureTV',
 					title: name,
 					url: ch.url,
+					// IPTV sources are usually not CORS/HLS-safe for the web
+					// player - let clients route to an external player
+					behaviorHints: { notWebReady: true },
 				},
 			],
 			cacheMaxAge: 3600, // 1h
